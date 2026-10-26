@@ -1,0 +1,29 @@
+{
+  "dossierId": "TEST-001",
+  "partition": "stable_core",
+  "receivedAt": "2026-10-24T10:00:00Z",
+  "mailbox": "orders@example.com",
+  "objective": "Handle the customer's order status request.",
+  "sources": [
+    {
+      "sourceId": "SRC-001",
+      "kind": "example",
+      "provenance": "synthetic_test_data",
+      "title": "Order information",
+      "lines": [
+        {
+          "lineId": "L1",
+          "text": "Order reference is ORDER-123."
+        },
+        {
+          "lineId": "L2",
+          "text": "Customer asks whether the order has shipped."
+        },
+        {
+          "lineId": "L3",
+          "text": "No sending approval is provided in this example."
+        }
+      ]
+    }
+  ]
+}

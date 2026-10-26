@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+mailroom.db
+
+mailroom.db-shm
+mailroom.db-wal
+test_private_key.pem
+*.db
+*.db-shm
+*.db-wal
+
+*.backup
