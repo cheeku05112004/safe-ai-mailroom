@@ -62,7 +62,7 @@ request_data = {
 
 try:
     response = httpx.post(
-        "http://127.0.0.1:8000/",
+        "https://safe-ai-mailroom-tmkd.onrender.com/",
         json=request_data,
         timeout=60,
     )

@@ -9,7 +9,7 @@ from app.security import (
     build_receipt_message,
 )
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "https://safe-ai-mailroom-tmkd.onrender.com"
 
 # Load the same private key used in test_propose.py
 private_key = serialization.load_pem_private_key(
