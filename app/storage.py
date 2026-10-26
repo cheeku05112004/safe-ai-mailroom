@@ -1,11 +1,55 @@
 import json
+import os
+import re
 import sqlite3
 from pathlib import Path
 
+import psycopg
+from psycopg.rows import dict_row
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(__file__).resolve().parent.parent / "mailroom.db"
 
 
+class DBConnection:
+    def __init__(self, connection, postgres=False):
+        self.connection = connection
+        self.postgres = postgres
+
+    @property
+    def in_transaction(self):
+        return self.connection.info.transaction_status != 0 if self.postgres else self.connection.in_transaction
+
+    def execute(self, sql, params=()):
+        if self.postgres:
+            sql = sql.replace("BEGIN IMMEDIATE", "BEGIN")
+            sql = sql.replace("?", "%s")
+            sql = sql.replace("ORDER BY rowid", "ORDER BY ctid")
+
+            if "INSERT OR IGNORE INTO" in sql:
+                sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+                sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+
+        return self.connection.execute(sql, params)
+
+    def __enter__(self):
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self.connection.__exit__(exc_type, exc, tb)
+
+
 def get_connection():
+    if DATABASE_URL:
+        connection = psycopg.connect(
+            DATABASE_URL,
+            row_factory=dict_row,
+            autocommit=True,
+            connect_timeout=10,
+        )
+        return DBConnection(connection, postgres=True)
+
     connection = sqlite3.connect(
         DB_PATH,
         timeout=10,
@@ -14,12 +58,13 @@ def get_connection():
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA busy_timeout=10000")
-    return connection
+    return DBConnection(connection)
 
 
 def initialize_database():
     with get_connection() as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
+        if not DATABASE_URL:
+            conn.execute("PRAGMA journal_mode=WAL")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS evaluations (
@@ -85,11 +130,7 @@ def get_cached_decision(content_fingerprint):
 
 
 def save_propose_result(
-    evaluation_id,
-    input_digest,
-    verifier_json,
-    response,
-    proposals,
+    evaluation_id, input_digest, verifier_json, response, proposals
 ):
     response_json = json.dumps(
         response, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -106,7 +147,9 @@ def save_propose_result(
 
             if existing:
                 if existing["input_digest"] != input_digest:
-                    raise ValueError("Evaluation ID already used with different input.")
+                    raise ValueError(
+                        "Evaluation ID already used with different input."
+                    )
                 if existing["propose_response"]:
                     conn.execute("COMMIT")
                     return json.loads(existing["propose_response"])
@@ -122,6 +165,13 @@ def save_propose_result(
             )
 
             for item in proposals:
+                proposal_json = json.dumps(
+                    item["proposal"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+
                 conn.execute(
                     """
                     INSERT INTO proposals (
@@ -132,12 +182,7 @@ def save_propose_result(
                         evaluation_id,
                         item["dossierId"],
                         item["contentFingerprint"],
-                        json.dumps(
-                            item["proposal"],
-                            sort_keys=True,
-                            separators=(",", ":"),
-                            ensure_ascii=False,
-                        ),
+                        proposal_json,
                     ),
                 )
 
@@ -147,15 +192,7 @@ def save_propose_result(
                         content_fingerprint, proposal_json
                     ) VALUES (?, ?)
                     """,
-                    (
-                        item["contentFingerprint"],
-                        json.dumps(
-                            item["proposal"],
-                            sort_keys=True,
-                            separators=(",", ":"),
-                            ensure_ascii=False,
-                        ),
-                    ),
+                    (item["contentFingerprint"], proposal_json),
                 )
 
             conn.execute("COMMIT")
@@ -222,13 +259,6 @@ def save_commit_response(evaluation_id, response):
             "UPDATE evaluations SET commit_response = ? WHERE evaluation_id = ?",
             (response_json, evaluation_id),
         )
-
-
-if __name__ == "__main__":
-    initialize_database()
-    print("Database initialized successfully!")
-    print(f"Database location: {DB_PATH}")
-
 
 
 def save_commit_result(evaluation_id, receipts, response):
@@ -311,3 +341,9 @@ def save_commit_result(evaluation_id, receipts, response):
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
+
+
+if __name__ == "__main__":
+    initialize_database()
+    print("Database initialized successfully!")
+    print("Database:", "PostgreSQL" if DATABASE_URL else str(DB_PATH))
