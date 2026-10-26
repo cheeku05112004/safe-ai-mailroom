@@ -1,6 +1,8 @@
 import asyncio
 import hashlib
 import json
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from fastapi import FastAPI, HTTPException, Body
 from pydantic import ValidationError
@@ -26,7 +28,43 @@ app = FastAPI(
 
 MAX_CONCURRENT_AI_CALLS = 8
 REQUEST_TIMEOUT_SECONDS = 53
+MAX_PAYLOAD_BYTES = 512 * 1024
 
+
+@app.middleware("http")
+async def enforce_payload_limits(request, call_next):
+    content_length = request.headers.get("content-length")
+
+    if content_length:
+        try:
+            if int(content_length) > MAX_PAYLOAD_BYTES:
+                return JSONResponse(
+                    {"error": "Request body too large"},
+                    status_code=413,
+                )
+        except ValueError:
+            return JSONResponse(
+                {"error": "Invalid Content-Length"},
+                status_code=400,
+            )
+
+    body = await request.body()
+
+    if len(body) > MAX_PAYLOAD_BYTES:
+        return JSONResponse(
+            {"error": "Request body too large"},
+            status_code=413,
+        )
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": body,
+            "more_body": False,
+        }
+
+    request._receive = receive
+    return await call_next(request)
 
 @app.on_event("startup")
 def startup():
@@ -322,7 +360,7 @@ async def gateway(payload: dict = Body(...)):
 
         elif operation == "commit":
             request = CommitRequest.model_validate(payload)
-            return commit(request)
+            return await run_in_threadpool(commit, request)
 
         else:
             raise HTTPException(
