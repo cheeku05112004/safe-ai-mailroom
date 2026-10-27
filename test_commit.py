@@ -1,3 +1,4 @@
+
 import base64
 import json
 import httpx
@@ -29,7 +30,7 @@ dossier = json.loads(Path("sample_dossier.json").read_text())
 request_data = {
     "profile": "ga5-mailroom-action-gate/v2",
     "operation": "propose",
-    "evaluationId": "LOCAL-TEST-001",
+    "evaluationId": "LOCAL-REJECT-TEST-001",
     "receiptVerifier": {
         "algorithm": "Ed25519",
         "publicKeyJwk": {
@@ -56,23 +57,30 @@ request_data = {
 }
 
 with httpx.Client(timeout=60) as client:
-    # Fetch the original proposal (this should be an exact replay).
-    propose_response = client.post(BASE_URL + "/propose", json=request_data)
+
+    # Test 1: Get proposal
+    propose_response = client.post(
+        BASE_URL + "/propose",
+        json=request_data,
+    )
+
     print("Propose status:", propose_response.status_code)
     propose_response.raise_for_status()
 
     result = propose_response.json()
     proposal = result["proposals"][0]
 
+    # Test 2: Create a rejected receipt
     receipt = {
         "dossierId": proposal["dossierId"],
         "callId": proposal["callId"],
         "action": proposal["action"],
-        "accepted": True,
+        "accepted": False,
         "proposalDigest": calculate_proposal_digest(proposal),
-        "receiptId": "LOCAL-RECEIPT-001",
+        "receiptId": "LOCAL-REJECT-RECEIPT-001",
     }
 
+    # Sign the receipt
     message = build_receipt_message(
         request_data["profile"],
         result["evaluationId"],
@@ -81,7 +89,9 @@ with httpx.Client(timeout=60) as client:
     )
 
     signature = private_key.sign(message)
-    receipt["receiptSignature"] = base64.b64encode(signature).decode()
+    receipt["receiptSignature"] = base64.b64encode(
+        signature
+    ).decode()
 
     commit_data = {
         "profile": request_data["profile"],
@@ -91,38 +101,72 @@ with httpx.Client(timeout=60) as client:
         "receipts": [receipt],
     }
 
-    # Test 1: deliberately invalid signature.
+    # Test 3: Invalid signature must fail
     bad_data = json.loads(json.dumps(commit_data))
     bad_data["receipts"][0]["receiptSignature"] = "AAAA"
 
-    bad_response = client.post(BASE_URL + "/commit", json=bad_data)
-    print("Invalid signature status (expected 422):", bad_response.status_code)
-
-    # Test 2: valid signature.
-    good_response = client.post(BASE_URL + "/commit", json=commit_data)
-    print("Valid signature status:", good_response.status_code)
-    print(json.dumps(good_response.json(), indent=2))
-
-    # Test 3: exact commit replay.
-    replay_response = client.post(BASE_URL + "/commit", json=commit_data)
-    print("Commit replay status:", replay_response.status_code)
-    print(
-        "Replay response identical:",
-        replay_response.json() == good_response.json(),
+    bad_response = client.post(
+        BASE_URL + "/commit",
+        json=bad_data,
     )
 
-    # Test 4: changed receipt must be rejected after commit.
+    print(
+        "Invalid signature status (expected 422):",
+        bad_response.status_code,
+    )
+
+    # Test 4: Valid signature with accepted=False
+    good_response = client.post(
+        BASE_URL + "/commit",
+        json=commit_data,
+    )
+
+    print("Valid rejected-receipt commit status:", good_response.status_code)
+    good_response.raise_for_status()
+
+    response_data = good_response.json()
+    print(json.dumps(response_data, indent=2))
+
+    # Verify accepted=False produces rejected outcome
+    outcome = response_data["outcomes"][0]
+
+    print("Rejected receipt outcome:", outcome["status"])
+
+    assert outcome["status"] == "rejected", (
+        "Expected rejected, got " + outcome["status"]
+    )
+
+    print("PASS: accepted=False produces rejected outcome.")
+
+    # Test 5: Exact commit replay
+    replay_response = client.post(
+        BASE_URL + "/commit",
+        json=commit_data,
+    )
+
+    print("Commit replay status:", replay_response.status_code)
+
+    assert replay_response.json() == good_response.json()
+
+    print("Replay response identical: True")
+
+    # Test 6: Changed receipt must return 409
     changed_data = json.loads(json.dumps(commit_data))
-    changed_data["receipts"][0]["receiptId"] = "DIFFERENT-RECEIPT-ID"
+    changed_data["receipts"][0]["receiptId"] = (
+        "LOCAL-DIFFERENT-RECEIPT"
+    )
 
     changed_receipt = changed_data["receipts"][0]
+
     changed_message = build_receipt_message(
         request_data["profile"],
         result["evaluationId"],
         result["inputDigest"],
         changed_receipt,
     )
+
     changed_signature = private_key.sign(changed_message)
+
     changed_receipt["receiptSignature"] = base64.b64encode(
         changed_signature
     ).decode()
@@ -136,4 +180,8 @@ with httpx.Client(timeout=60) as client:
         "Changed receipt status (expected 409):",
         changed_response.status_code,
     )
-    print("Changed receipt response:", changed_response.json())
+
+    assert changed_response.status_code == 409
+
+    print("PASS: Changed receipt rejected.")
+
