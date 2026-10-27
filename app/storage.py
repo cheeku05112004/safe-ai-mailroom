@@ -270,10 +270,17 @@ def save_commit_result(evaluation_id, receipts, response):
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            row = conn.execute(
-                "SELECT commit_response FROM evaluations WHERE evaluation_id = ?",
-                (evaluation_id,),
-            ).fetchone()
+            if conn.postgres:
+                row = conn.execute(
+                    "SELECT commit_response FROM evaluations "
+                    "WHERE evaluation_id = ? FOR UPDATE",
+                    (evaluation_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT commit_response FROM evaluations WHERE evaluation_id = ?",
+                    (evaluation_id,),
+                ).fetchone()
 
             if row is None:
                 raise ValueError("Unknown evaluation.")
