@@ -233,6 +233,7 @@ async def propose(request: ProposeRequest):
             detail="Proposal processing timed out. Retry with the same evaluation ID.",
         )
     except ValueError as exc:
+        logger.exception("Proposal ValueError: %s", str(exc))
         raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
         logger.exception(
