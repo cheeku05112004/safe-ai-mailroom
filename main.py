@@ -113,7 +113,11 @@ async def create_one_proposal(
         if cached is not None:
             cached = dict(cached)
 
-            # Revalidate cached decisions against the current dossier.
+            # Remove evaluation-specific identifiers before validation.
+            cached.pop("dossierId", None)
+            cached.pop("callId", None)
+
+            # Revalidate the semantic decision against the current dossier.
             validate_proposal(cached, dossier, allowed_actions)
             validate_exact_schema(cached, dossier)
 
