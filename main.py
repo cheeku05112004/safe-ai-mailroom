@@ -1,6 +1,9 @@
 import asyncio
 import hashlib
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 import time
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -231,7 +234,11 @@ async def propose(request: ProposeRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
-    except Exception:
+    except Exception as exc:
+        logger.exception(
+            "Proposal processing failed: %s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=502,
             detail="Proposal processing failed.",
