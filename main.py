@@ -1,7 +1,8 @@
 import asyncio
 import hashlib
 import json
-from fastapi.responses import JSONResponse
+import time
+from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from fastapi import FastAPI, HTTPException, Body
@@ -29,6 +30,8 @@ app = FastAPI(
 MAX_CONCURRENT_AI_CALLS = 8
 REQUEST_TIMEOUT_SECONDS = 53
 MAX_PAYLOAD_BYTES = 512 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
+COMMIT_TIMEOUT_SECONDS = 180
 
 
 @app.middleware("http")
@@ -64,7 +67,29 @@ async def enforce_payload_limits(request, call_next):
         }
 
     request._receive = receive
-    return await call_next(request)
+    response = await call_next(request)
+
+    response_body = bytearray()
+    async for chunk in response.body_iterator:
+        response_body.extend(chunk)
+        if len(response_body) > MAX_RESPONSE_BYTES:
+            return JSONResponse(
+                {"error": "Response body too large"},
+                status_code=500,
+            )
+
+    headers = {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() != "content-length"
+    }
+
+    return Response(
+        content=bytes(response_body),
+        status_code=response.status_code,
+        headers=headers,
+        background=response.background,
+    )
 
 @app.on_event("startup")
 def startup():
@@ -255,6 +280,9 @@ def commit(request: CommitRequest):
         save_commit_result,
     )
 
+    # Enforce a cooperative deadline for receipt verification and saving.
+    deadline = time.monotonic() + COMMIT_TIMEOUT_SECONDS
+
     # Validate the incoming request against the strict Pydantic schema.
     data = request
 
@@ -286,6 +314,12 @@ def commit(request: CommitRequest):
 
     # Verify every receipt before saving any receipt or outcome.
     for receipt_model in data.receipts:
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=504,
+                detail="Commit verification deadline exceeded.",
+            )
+
         receipt = receipt_model.model_dump()
         dossier_id = receipt["dossierId"]
 
@@ -347,6 +381,12 @@ def commit(request: CommitRequest):
         "inputDigest": data.inputDigest,
         "outcomes": outcomes,
     }
+
+    if time.monotonic() >= deadline:
+        raise HTTPException(
+            status_code=504,
+            detail="Commit verification deadline exceeded.",
+        )
 
     try:
         return save_commit_result(

@@ -29,7 +29,7 @@ dossier = json.loads(Path("sample_dossier.json").read_text())
 request_data = {
     "profile": "ga5-mailroom-action-gate/v2",
     "operation": "propose",
-    "evaluationId": "LOCAL-TEST-001",
+    "evaluationId": "GW-COMMIT-20261027-01",
     "receiptVerifier": {
         "algorithm": "Ed25519",
         "publicKeyJwk": {
