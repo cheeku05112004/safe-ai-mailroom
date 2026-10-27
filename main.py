@@ -407,6 +407,7 @@ def commit(request: CommitRequest):
 
 
 @app.post("/")
+@app.post("/v1/mailroom/actions")
 async def gateway(payload: dict = Body(...)):
     operation = payload.get("operation")
 
