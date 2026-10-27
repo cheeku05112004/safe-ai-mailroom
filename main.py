@@ -112,6 +112,11 @@ async def create_one_proposal(
         cached = get_cached_decision(fingerprint)
         if cached is not None:
             cached = dict(cached)
+
+            # Revalidate cached decisions against the current dossier.
+            validate_proposal(cached, dossier, allowed_actions)
+            validate_exact_schema(cached, dossier)
+
             cached["dossierId"] = dossier["dossierId"]
             cached["callId"] = call_id
             return {
